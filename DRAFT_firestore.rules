@@ -1,0 +1,565 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidEmailId(emailId) {
+      return emailId is string && emailId.size() >= 3 && emailId.size() <= 160 &&
+        emailId.matches('^[a-z0-9._%+\\-]+@[a-z0-9.\\-]+\\.[a-z]{2,}$');
+    }
+
+    function isPrimaryAdmin() {
+      return isSignedIn() && isVerified() &&
+        request.auth.token.email is string &&
+        request.auth.token.email.lower() == 'mitabdou09@gmail.com';
+    }
+
+    function isAdmin() {
+      return isSignedIn() && isVerified() && (
+        isPrimaryAdmin() ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (request.auth.token.email is string &&
+          exists(/databases/$(database)/documents/adminEmails/$(request.auth.token.email.lower())))
+      );
+    }
+
+    function isTeamMember() {
+      return isSignedIn() && isVerified() && (
+        isAdmin() ||
+        exists(/databases/$(database)/documents/teamMembers/$(request.auth.uid))
+      );
+    }
+
+    // Validation Helpers (Synchronized with firebase-blueprint.json)
+    function isValidTeamMember(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'role', 'accessCode', 'joinedAt']) &&
+        data.keys().hasOnly(['uid', 'displayName', 'role', 'accessCode', 'joinedAt']) &&
+        isValidId(data.uid) &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
+        data.role is string && data.role == 'member' &&
+        data.accessCode is string && data.accessCode.size() >= 1 && data.accessCode.size() <= 32 &&
+        data.joinedAt is timestamp;
+    }
+
+    function isValidAdminRecord(data) {
+      return data.keys().hasAll(['uid', 'grantedBy', 'grantedAt']) &&
+        data.keys().hasOnly(['uid', 'grantedBy', 'grantedAt']) &&
+        isValidId(data.uid) &&
+        isValidId(data.grantedBy) &&
+        data.grantedAt is timestamp;
+    }
+
+    function isValidAdminEmailRecord(data) {
+      return data.keys().hasAll(['email', 'grantedBy', 'grantedByEmail', 'grantedAt']) &&
+        data.keys().hasOnly(['email', 'grantedBy', 'grantedByEmail', 'grantedAt']) &&
+        isValidEmailId(data.email) &&
+        isValidId(data.grantedBy) &&
+        data.grantedByEmail is string && data.grantedByEmail.size() >= 3 && data.grantedByEmail.size() <= 160 &&
+        data.grantedAt is timestamp;
+    }
+
+    function isValidCategory(cat) {
+      return cat is string && cat in [
+        'آليات ثقيلة',
+        'رافعات',
+        'مولدات كهربائية',
+        'ضواغط هواء',
+        'معدات لحام',
+        'سيارات خدمة',
+        'أجهزة قياس',
+        'أخرى'
+      ];
+    }
+
+    function isValidCondition(cond) {
+      return cond is string && cond in [
+        'جاهزة للعمل',
+        'قيد الصيانة',
+        'متوقفة - بانتظار',
+        'خارجة عن الخدمة'
+      ];
+    }
+
+    function isValidDateString(val) {
+      return val is string && val.size() <= 10 && val.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+    }
+
+    function isValidOptionalDateString(val) {
+      return val is string && val.size() <= 10 &&
+        (val == '' || val.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'));
+    }
+
+    function isValidEquipment(data) {
+      return data.keys().hasAll([
+        'workspaceKey', 'name', 'equipmentNumber', 'category', 'condition',
+        'location', 'entryDate', 'expectedExitDate',
+        'delayServices', 'delayServicesNote',
+        'delaySpareParts', 'delaySparePartsNote',
+        'delayOther', 'delayOtherNote',
+        'createdByUid', 'createdBy', 'lastUpdatedBy', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'workspaceKey', 'name', 'equipmentNumber', 'category', 'condition',
+        'location', 'entryDate', 'expectedExitDate',
+        'delayServices', 'delayServicesNote',
+        'delaySpareParts', 'delaySparePartsNote',
+        'delayOther', 'delayOtherNote', 'finalExitDate',
+        'createdByUid', 'createdBy', 'lastUpdatedBy', 'createdAt', 'updatedAt'
+      ]) &&
+      data.workspaceKey is string && data.workspaceKey.size() >= 1 && data.workspaceKey.size() <= 32 &&
+      data.name is string && data.name.size() >= 1 && data.name.size() <= 200 &&
+      data.equipmentNumber is string && data.equipmentNumber.size() >= 1 && data.equipmentNumber.size() <= 80 &&
+      isValidCategory(data.category) &&
+      isValidCondition(data.condition) &&
+      data.location is string && data.location.size() >= 1 && data.location.size() <= 200 &&
+      isValidDateString(data.entryDate) &&
+      isValidDateString(data.expectedExitDate) &&
+      data.delayServices is bool &&
+      data.delayServicesNote is string && data.delayServicesNote.size() <= 1500 &&
+      data.delaySpareParts is bool &&
+      data.delaySparePartsNote is string && data.delaySparePartsNote.size() <= 1500 &&
+      data.delayOther is bool &&
+      data.delayOtherNote is string && data.delayOtherNote.size() <= 1500 &&
+      (!('finalExitDate' in data) || isValidOptionalDateString(data.finalExitDate)) &&
+      isValidId(data.createdByUid) &&
+      data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 80 &&
+      data.lastUpdatedBy is string && data.lastUpdatedBy.size() >= 1 && data.lastUpdatedBy.size() <= 80 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isEquipmentEditAction() {
+      return incoming().diff(existing()).affectedKeys().hasOnly([
+        'name', 'equipmentNumber', 'category', 'condition',
+        'location', 'entryDate', 'expectedExitDate',
+        'delayServices', 'delayServicesNote',
+        'delaySpareParts', 'delaySparePartsNote',
+        'delayOther', 'delayOtherNote', 'finalExitDate',
+        'lastUpdatedBy', 'updatedAt'
+      ]);
+    }
+
+    function isValidEquipmentNote(data) {
+      return data.keys().hasAll([
+        'workspaceKey', 'equipmentId', 'authorUid', 'author', 'role', 'text', 'createdAt'
+      ]) &&
+      data.keys().hasOnly([
+        'workspaceKey', 'equipmentId', 'authorUid', 'author', 'role', 'text', 'createdAt'
+      ]) &&
+      data.workspaceKey is string && data.workspaceKey.size() >= 1 && data.workspaceKey.size() <= 32 &&
+      isValidId(data.equipmentId) &&
+      isValidId(data.authorUid) &&
+      data.author is string && data.author.size() >= 1 && data.author.size() <= 80 &&
+      data.role is string && data.role in ['member', 'admin'] &&
+      data.text is string && data.text.size() >= 1 && data.text.size() <= 1000 &&
+      data.createdAt is timestamp;
+    }
+
+    function isValidCloudBackup(data) {
+      return data.keys().hasAll([
+        'workspaceKey', 'label', 'createdByUid', 'createdBy', 'itemCount', 'items', 'createdAt'
+      ]) &&
+      data.keys().hasOnly([
+        'workspaceKey', 'label', 'createdByUid', 'createdBy', 'itemCount', 'items', 'createdAt'
+      ]) &&
+      data.workspaceKey is string && data.workspaceKey.size() >= 1 && data.workspaceKey.size() <= 32 &&
+      data.label is string && data.label.size() >= 1 && data.label.size() <= 120 &&
+      isValidId(data.createdByUid) &&
+      data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 80 &&
+      data.itemCount is int && data.itemCount >= 0 && data.itemCount <= 500 &&
+      data.items is list && data.items.size() <= 500 &&
+      (data.items.size() == 0 || data.items[0] is map) &&
+      data.createdAt is timestamp;
+    }
+
+    function isValidOrgAssetStatus(st) {
+      return st is string && st in [
+        'يعمل - حالة جيدة',
+        'بحاجة لصيانة',
+        'معطل',
+        'خارج الخدمة'
+      ];
+    }
+
+    function isValidOrgAsset(data) {
+      return data.keys().hasAll([
+        'workspaceKey', 'name', 'assetNumber', 'status',
+        'createdByUid', 'createdBy', 'lastUpdatedBy', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'workspaceKey', 'name', 'assetNumber', 'status',
+        'createdByUid', 'createdBy', 'lastUpdatedBy', 'createdAt', 'updatedAt'
+      ]) &&
+      data.workspaceKey is string && data.workspaceKey.size() >= 1 && data.workspaceKey.size() <= 32 &&
+      data.name is string && data.name.size() >= 1 && data.name.size() <= 200 &&
+      data.assetNumber is string && data.assetNumber.size() >= 1 && data.assetNumber.size() <= 80 &&
+      isValidOrgAssetStatus(data.status) &&
+      isValidId(data.createdByUid) &&
+      data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 80 &&
+      data.lastUpdatedBy is string && data.lastUpdatedBy.size() >= 1 && data.lastUpdatedBy.size() <= 80 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isOrgAssetEditAction() {
+      return incoming().diff(existing()).affectedKeys().hasOnly([
+        'name', 'assetNumber', 'status', 'lastUpdatedBy', 'updatedAt'
+      ]);
+    }
+
+    function isValidIsoTimestamp(val) {
+      return val is string && val.size() >= 10 && val.size() <= 40;
+    }
+
+    function isValidLocalTeamNote(note) {
+      return note is map &&
+        note.keys().hasAll(['id', 'author', 'role', 'text', 'createdAt']) &&
+        note.keys().hasOnly(['id', 'author', 'role', 'text', 'createdAt']) &&
+        isValidId(note.id) &&
+        note.author is string && note.author.size() >= 1 && note.author.size() <= 80 &&
+        note.role is string && note.role in ['admin', 'member'] &&
+        note.text is string && note.text.size() >= 1 && note.text.size() <= 1000 &&
+        isValidIsoTimestamp(note.createdAt);
+    }
+
+    function isValidLocalSyncEquipment(data) {
+      return data.keys().hasAll([
+        'workspaceKey', 'name', 'equipmentNumber', 'category', 'condition',
+        'location', 'entryDate', 'expectedExitDate',
+        'delayServices', 'delayServicesNote',
+        'delaySpareParts', 'delaySparePartsNote',
+        'delayOther', 'delayOtherNote',
+        'teamNotes', 'createdBy', 'lastUpdatedBy', 'createdAtIso', 'updatedAtIso',
+        'deleted', 'syncedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'workspaceKey', 'name', 'equipmentNumber', 'category', 'condition',
+        'location', 'entryDate', 'expectedExitDate',
+        'delayServices', 'delayServicesNote',
+        'delaySpareParts', 'delaySparePartsNote',
+        'delayOther', 'delayOtherNote', 'finalExitDate',
+        'teamNotes', 'createdBy', 'lastUpdatedBy', 'createdAtIso', 'updatedAtIso',
+        'deleted', 'syncedAt'
+      ]) &&
+      data.workspaceKey is string && data.workspaceKey == 'm1256' &&
+      data.name is string && data.name.size() >= 1 && data.name.size() <= 200 &&
+      data.equipmentNumber is string && data.equipmentNumber.size() >= 1 && data.equipmentNumber.size() <= 80 &&
+      isValidCategory(data.category) &&
+      isValidCondition(data.condition) &&
+      data.location is string && data.location.size() >= 1 && data.location.size() <= 200 &&
+      isValidDateString(data.entryDate) &&
+      isValidDateString(data.expectedExitDate) &&
+      data.delayServices is bool &&
+      data.delayServicesNote is string && data.delayServicesNote.size() <= 1500 &&
+      data.delaySpareParts is bool &&
+      data.delaySparePartsNote is string && data.delaySparePartsNote.size() <= 1500 &&
+      data.delayOther is bool &&
+      data.delayOtherNote is string && data.delayOtherNote.size() <= 1500 &&
+      (!('finalExitDate' in data) || isValidOptionalDateString(data.finalExitDate)) &&
+      data.teamNotes is list && data.teamNotes.size() <= 200 &&
+      (data.teamNotes.size() == 0 || isValidLocalTeamNote(data.teamNotes[0])) &&
+      data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 80 &&
+      data.lastUpdatedBy is string && data.lastUpdatedBy.size() >= 1 && data.lastUpdatedBy.size() <= 80 &&
+      isValidIsoTimestamp(data.createdAtIso) &&
+      isValidIsoTimestamp(data.updatedAtIso) &&
+      data.deleted is bool &&
+      data.syncedAt is timestamp;
+    }
+
+    function isLocalSyncEquipmentUpdateAction() {
+      return incoming().diff(existing()).affectedKeys().hasOnly([
+        'name', 'equipmentNumber', 'category', 'condition',
+        'location', 'entryDate', 'expectedExitDate',
+        'delayServices', 'delayServicesNote',
+        'delaySpareParts', 'delaySparePartsNote',
+        'delayOther', 'delayOtherNote', 'finalExitDate',
+        'teamNotes', 'createdBy', 'lastUpdatedBy', 'updatedAtIso',
+        'deleted', 'syncedAt'
+      ]);
+    }
+
+    function isValidLocalSyncOrgAsset(data) {
+      return data.keys().hasAll([
+        'workspaceKey', 'name', 'assetNumber', 'status',
+        'createdBy', 'lastUpdatedBy', 'createdAtIso', 'updatedAtIso',
+        'deleted', 'syncedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'workspaceKey', 'name', 'assetNumber', 'status',
+        'createdBy', 'lastUpdatedBy', 'createdAtIso', 'updatedAtIso',
+        'deleted', 'syncedAt'
+      ]) &&
+      data.workspaceKey is string && data.workspaceKey == 'm1256' &&
+      data.name is string && data.name.size() >= 1 && data.name.size() <= 200 &&
+      data.assetNumber is string && data.assetNumber.size() >= 1 && data.assetNumber.size() <= 80 &&
+      isValidOrgAssetStatus(data.status) &&
+      data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 80 &&
+      data.lastUpdatedBy is string && data.lastUpdatedBy.size() >= 1 && data.lastUpdatedBy.size() <= 80 &&
+      isValidIsoTimestamp(data.createdAtIso) &&
+      isValidIsoTimestamp(data.updatedAtIso) &&
+      data.deleted is bool &&
+      data.syncedAt is timestamp;
+    }
+
+    function isLocalSyncOrgAssetUpdateAction() {
+      return incoming().diff(existing()).affectedKeys().hasOnly([
+        'name', 'assetNumber', 'status', 'createdBy', 'lastUpdatedBy',
+        'updatedAtIso', 'deleted', 'syncedAt'
+      ]);
+    }
+
+    function isValidWorkspaceSettings(data) {
+      return data.keys().hasAll([
+        'workspaceKey', 'syncRefreshLocked', 'lockReason', 'updatedBy', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'workspaceKey', 'syncRefreshLocked', 'lockReason', 'updatedBy', 'updatedAt'
+      ]) &&
+      data.workspaceKey is string && data.workspaceKey == 'm1256' &&
+      data.syncRefreshLocked is bool &&
+      data.lockReason is string && data.lockReason.size() <= 300 &&
+      data.updatedBy is string && data.updatedBy.size() >= 1 && data.updatedBy.size() <= 80 &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll([
+        'workspaceKey', 'sourceMode', 'action', 'entityType',
+        'entityId', 'entityLabel', 'details', 'actorUid', 'actorName', 'createdAt'
+      ]) &&
+      data.keys().hasOnly([
+        'workspaceKey', 'sourceMode', 'action', 'entityType',
+        'entityId', 'entityLabel', 'details', 'actorUid', 'actorName', 'createdAt'
+      ]) &&
+      data.workspaceKey is string && data.workspaceKey == 'm1256' &&
+      data.sourceMode is string && data.sourceMode in ['cloud', 'local', 'transfer', 'admin'] &&
+      data.action is string && data.action in [
+        'create', 'update', 'delete', 'note', 'sync',
+        'transfer_to_cloud', 'transfer_to_local', 'lock_toggle',
+        'permission_change', 'backup_restore'
+      ] &&
+      data.entityType is string && data.entityType in [
+        'equipment', 'orgAsset', 'note', 'backup', 'team', 'settings'
+      ] &&
+      isValidId(data.entityId) &&
+      data.entityLabel is string && data.entityLabel.size() >= 1 && data.entityLabel.size() <= 200 &&
+      data.details is string && data.details.size() <= 400 &&
+      isValidId(data.actorUid) &&
+      data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 80 &&
+      data.createdAt is timestamp;
+    }
+
+    // 1. Team Members
+    match /teamMembers/{userId} {
+      allow get: if isValidId(userId) && isSignedIn() && isVerified() && (request.auth.uid == userId || isAdmin());
+      allow list: if isSignedIn() && isVerified() && (resource.data.uid == request.auth.uid || isPrimaryAdmin());
+      allow create: if isSignedIn() && isVerified() && isValidId(userId) &&
+        request.auth.uid == userId &&
+        isValidTeamMember(incoming()) &&
+        incoming().uid == request.auth.uid &&
+        incoming().role == 'member' &&
+        incoming().accessCode == 'm1256' &&
+        incoming().joinedAt == request.time;
+      allow update: if isSignedIn() && isVerified() && isValidId(userId) &&
+        request.auth.uid == userId &&
+        isValidTeamMember(incoming()) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['displayName']) &&
+        incoming().uid == existing().uid &&
+        incoming().role == existing().role &&
+        incoming().accessCode == existing().accessCode &&
+        incoming().joinedAt == existing().joinedAt;
+      allow delete: if isValidId(userId) && isPrimaryAdmin();
+    }
+
+    // 2. Admins Registry
+    match /admins/{userId} {
+      allow get: if isValidId(userId) && isSignedIn() && isVerified() && (request.auth.uid == userId || isAdmin());
+      allow list: if isSignedIn() && isVerified() && (resource.data.uid == request.auth.uid || isPrimaryAdmin());
+      allow create: if isValidId(userId) && isPrimaryAdmin() &&
+        isValidAdminRecord(incoming()) &&
+        incoming().uid == userId &&
+        incoming().grantedBy == request.auth.uid &&
+        incoming().grantedAt == request.time;
+      allow update: if false;
+      allow delete: if isValidId(userId) && isPrimaryAdmin();
+    }
+
+    // 2b. Email-Indexed Admins Registry
+    match /adminEmails/{emailId} {
+      allow get: if isValidEmailId(emailId) && isSignedIn() && isVerified() && (
+        (request.auth.token.email is string && request.auth.token.email.lower() == emailId) ||
+        isAdmin()
+      );
+      allow list: if isAdmin();
+      allow create: if isValidEmailId(emailId) && isPrimaryAdmin() &&
+        isValidAdminEmailRecord(incoming()) &&
+        incoming().email == emailId &&
+        incoming().grantedBy == request.auth.uid &&
+        incoming().grantedAt == request.time;
+      allow update: if false;
+      allow delete: if isValidEmailId(emailId) && isPrimaryAdmin() && emailId != 'mitabdou09@gmail.com';
+    }
+
+    // 3. Equipment & Delay Records
+    match /equipment/{equipmentId} {
+      allow get: if isValidId(equipmentId) && isTeamMember();
+      allow list: if isSignedIn() && isVerified() && resource.data.workspaceKey == 'm1256';
+      allow create: if isSignedIn() && isVerified() && isValidId(equipmentId) &&
+        isValidEquipment(incoming()) &&
+        incoming().workspaceKey == 'm1256' &&
+        incoming().createdByUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isTeamMember();
+      allow update: if isSignedIn() && isVerified() && isValidId(equipmentId) &&
+        isValidEquipment(incoming()) &&
+        incoming().workspaceKey == existing().workspaceKey &&
+        incoming().createdByUid == existing().createdByUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        isTeamMember() &&
+        (isAdmin() || isEquipmentEditAction());
+      allow delete: if isValidId(equipmentId) && isAdmin();
+
+      // 4. Equipment Team Notes Subcollection (Master Gate)
+      match /notes/{noteId} {
+        allow get: if isValidId(equipmentId) && isValidId(noteId) && isTeamMember() &&
+          exists(/databases/$(database)/documents/equipment/$(equipmentId));
+        allow list: if isSignedIn() && isVerified() && resource.data.workspaceKey == 'm1256';
+        allow create: if isSignedIn() && isVerified() && isValidId(equipmentId) && isValidId(noteId) &&
+          isValidEquipmentNote(incoming()) &&
+          incoming().workspaceKey == 'm1256' &&
+          incoming().equipmentId == equipmentId &&
+          incoming().authorUid == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          (incoming().role == 'member' || isAdmin()) &&
+          isTeamMember() &&
+          get(/databases/$(database)/documents/equipment/$(equipmentId)).data.workspaceKey == 'm1256';
+        allow update: if false;
+        allow delete: if isValidId(equipmentId) && isValidId(noteId) && isAdmin();
+      }
+    }
+
+    // 5. Cloud Backup Snapshots
+    match /backups/{backupId} {
+      allow get: if isValidId(backupId) && isTeamMember();
+      allow list: if isSignedIn() && isVerified() && resource.data.workspaceKey == 'm1256';
+      allow create: if isSignedIn() && isVerified() && isValidId(backupId) &&
+        isValidCloudBackup(incoming()) &&
+        incoming().workspaceKey == 'm1256' &&
+        incoming().createdByUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        isTeamMember();
+      allow update: if false;
+      allow delete: if isValidId(backupId) && isAdmin();
+    }
+
+    // 6. Organization Equipment Inventory List
+    match /orgAssets/{assetId} {
+      allow get: if isValidId(assetId) && isTeamMember();
+      allow list: if isSignedIn() && isVerified() && resource.data.workspaceKey == 'm1256';
+      allow create: if isSignedIn() && isVerified() && isValidId(assetId) &&
+        isValidOrgAsset(incoming()) &&
+        incoming().workspaceKey == 'm1256' &&
+        incoming().createdByUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isTeamMember();
+      allow update: if isSignedIn() && isVerified() && isValidId(assetId) &&
+        isValidOrgAsset(incoming()) &&
+        incoming().workspaceKey == existing().workspaceKey &&
+        incoming().createdByUid == existing().createdByUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        isTeamMember() &&
+        (isAdmin() || isOrgAssetEditAction());
+      allow delete: if isValidId(assetId) && isAdmin();
+    }
+
+    // 7. Local Desktop Edition Colleague Sync — Equipment & Notes (Workspace-scoped, zero PII)
+    match /localSyncEquipment/{itemId} {
+      allow get: if isValidId(itemId) && existing().workspaceKey == 'm1256';
+      allow list: if resource.data.workspaceKey == 'm1256';
+      allow create: if isValidId(itemId) &&
+        isValidLocalSyncEquipment(incoming()) &&
+        incoming().workspaceKey == 'm1256' &&
+        incoming().syncedAt == request.time;
+      allow update: if isValidId(itemId) &&
+        isValidLocalSyncEquipment(incoming()) &&
+        incoming().workspaceKey == existing().workspaceKey &&
+        incoming().createdAtIso == existing().createdAtIso &&
+        incoming().syncedAt == request.time &&
+        isLocalSyncEquipmentUpdateAction();
+      allow delete: if false;
+    }
+
+    // 8. Local Desktop Edition Colleague Sync — Organization Inventory (Workspace-scoped, zero PII)
+    match /localSyncOrgAssets/{assetId} {
+      allow get: if isValidId(assetId) && existing().workspaceKey == 'm1256';
+      allow list: if resource.data.workspaceKey == 'm1256';
+      allow create: if isValidId(assetId) &&
+        isValidLocalSyncOrgAsset(incoming()) &&
+        incoming().workspaceKey == 'm1256' &&
+        incoming().syncedAt == request.time;
+      allow update: if isValidId(assetId) &&
+        isValidLocalSyncOrgAsset(incoming()) &&
+        incoming().workspaceKey == existing().workspaceKey &&
+        incoming().createdAtIso == existing().createdAtIso &&
+        incoming().syncedAt == request.time &&
+        isLocalSyncOrgAssetUpdateAction();
+      allow delete: if false;
+    }
+
+    // 9. Workspace Settings & Sync/Refresh Lock (Controlled exclusively by Primary Admin)
+    match /workspaceSettings/{workspaceId} {
+      allow get: if isValidId(workspaceId) && workspaceId == 'm1256';
+      allow list: if false;
+      allow create, update: if isValidId(workspaceId) &&
+        workspaceId == 'm1256' &&
+        isPrimaryAdmin() &&
+        isValidWorkspaceSettings(incoming()) &&
+        incoming().workspaceKey == 'm1256' &&
+        incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    // 10. Activity Audit Logs (Append-only for team members, readable only by Primary Admin)
+    match /auditLogs/{logId} {
+      allow get: if isValidId(logId) && isPrimaryAdmin();
+      allow list: if isPrimaryAdmin() && resource.data.workspaceKey == 'm1256';
+      allow create: if isValidId(logId) &&
+        isTeamMember() &&
+        isValidAuditLog(incoming()) &&
+        incoming().workspaceKey == 'm1256' &&
+        incoming().actorUid == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+  }
+}
+
